@@ -54,6 +54,13 @@ h2{font-size:1rem;margin:18px 0 6px}
 <h2>Kayıtlı notlar</h2>
 <div id="nlist"></div>
 
+<h2>🔇 Duyulamayan ortamlar</h2>
+<small>İnsan kulağının duyamayacağı (19-21,5 kHz) tek tonlar. Seed numarası yok; her biri "Duyulamayan" adı ve frekansıyla seçilir. Telefon/tablet mikrofonu bunları yakalayabilir. Dikkat: evcil hayvanlar bu sesleri duyabilir; ses seviyesini düşük tutun.</small>
+<div class="row"><select id="usel" style="flex:1;font:inherit;padding:10px;border-radius:10px;border:0;background:var(--card);color:var(--fg)"></select></div>
+<div class="row"><button class="main" id="uplay">▶ Yayınla</button><button id="ulisten">🎧 Dinle ve tanı</button></div>
+<textarea id="unote" placeholder="Bu duyulamayan ses için not..."></textarea>
+<div class="row"><button id="usave">Notu kaydet</button><small id="ustate"></small></div>
+
 <script>
 const $=id=>document.getElementById(id);
 const A=['Sakin','Derin','Parlak','Puslu','Gizemli','Yumuşak','Uzak','Sıcak','Soğuk','Rüya gibi','Titrek','Geniş','Yoğun','Sessiz','Büyülü','Gece','Loş','Berrak'];
@@ -206,6 +213,84 @@ async function recognize(){
   say((unsure?'Büyük ihtimalle ':'')+make(b.s).name+'. '+notes[b.s]);
 }
 $('listen').onclick=recognize;
+
+/* ---- Duyulamayan (ultrason) ortamlar ---- */
+const UF=[];for(let f=19000;f<=21500;f+=250)UF.push(f);
+let unotes={};
+try{unotes=JSON.parse(localStorage.getItem('ortam-duy')||'{}')||{}}catch(e){unotes={}}
+function upersist(){try{localStorage.setItem('ortam-duy',JSON.stringify(unotes));return true}catch(e){return false}}
+const usel=$('usel');
+UF.forEach(f=>{const o=document.createElement('option');o.value=f;o.textContent='Duyulamayan · '+(f/1000).toFixed(2)+' kHz';usel.appendChild(o)});
+function ucur(){return +usel.value}
+function uload(){$('unote').value=unotes[ucur()]||''}
+usel.onchange=()=>{ustop();uload()};
+$('usave').onclick=()=>{
+  const t=$('unote').value.trim();
+  if(t)unotes[ucur()]=t;else delete unotes[ucur()];
+  $('ustate').textContent=upersist()?(t?'Kaydedildi ✓':'Not silindi'):'Kaydedilemedi.';
+};
+let uc=null,uo=null,ug=null;
+function uplay(){
+  if(uo){ustop();return}
+  if(!uc){try{uc=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000})}catch(e){uc=new (window.AudioContext||window.webkitAudioContext)()}}
+  if(uc.sampleRate/2<ucur()+300){$('ustate').textContent='Bu cihazın ses hızı bu frekansı desteklemiyor, daha düşük bir ton seçin.';return}
+  if(uc.state==='suspended')uc.resume();
+  uo=uc.createOscillator();ug=uc.createGain();
+  uo.type='sine';uo.frequency.value=ucur();
+  const v=Math.pow($('vol').value/100,2)*0.5;
+  ug.gain.setValueAtTime(0,uc.currentTime);
+  ug.gain.linearRampToValueAtTime(v,uc.currentTime+0.3);
+  uo.connect(ug).connect(uc.destination);uo.start();
+  $('uplay').textContent='■ Yayını durdur';
+  $('ustate').textContent='Yayında: '+(ucur()/1000).toFixed(2)+' kHz (duyulmaz)';
+}
+function ustop(){
+  if(uo){try{ug.gain.setTargetAtTime(0,uc.currentTime,0.05);uo.stop(uc.currentTime+0.3)}catch(e){}uo=null}
+  $('uplay').textContent='▶ Yayınla';
+}
+$('uplay').onclick=uplay;
+async function urecognize(){
+  if(listening)return;
+  const out=$('ustate');
+  let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}})}
+  catch(e){out.textContent='Mikrofona erişilemedi. Tarayıcı izni gerekli.';return}
+  try{speechSynthesis.speak(new SpeechSynthesisUtterance(''))}catch(e){}
+  listening=true;$('ulisten').disabled=true;
+  const rc=new (window.AudioContext||window.webkitAudioContext)();
+  const src=rc.createMediaStreamSource(stream),a=rc.createAnalyser();
+  a.fftSize=32768;a.smoothingTimeConstant=0;src.connect(a);
+  const n=a.frequencyBinCount,bin=rc.sampleRate/a.fftSize,nyq=rc.sampleRate/2,buf=new Float32Array(n),sum=new Float32Array(n);
+  let frames=0;const T=3000,t0=performance.now();
+  await new Promise(res=>{
+    const iv=setInterval(()=>{
+      a.getFloatFrequencyData(buf);
+      for(let i=0;i<n;i++)sum[i]+=isFinite(buf[i])?buf[i]:-140;
+      frames++;
+      out.textContent='Dinleniyor… %'+Math.min(100,Math.round((performance.now()-t0)/T*100));
+      if(performance.now()-t0>=T){clearInterval(iv);res()}
+    },200);
+  });
+  stream.getTracks().forEach(t=>t.stop());rc.close();
+  listening=false;$('ulisten').disabled=false;
+  const sp=sum.map(v=>v/frames);
+  const lo=Math.floor(15000/bin),hi=Math.min(n-1,Math.floor((nyq-100)/bin));
+  const sorted=Array.from(sp.slice(lo,hi)).sort((x,y)=>x-y),floor=sorted[sorted.length>>1];
+  let best=null;
+  UF.forEach(f=>{
+    if(f>nyq-300)return;
+    const c=Math.round(f/bin),w=Math.ceil(150/bin);
+    let m=-999;for(let i=c-w;i<=c+w;i++)if(sp[i]>m)m=sp[i];
+    const ex=m-floor;
+    if(!best||ex>best.ex)best={f,ex};
+  });
+  if(!best||best.ex<10){out.textContent='Duyulamayan bir ses algılanmadı (en güçlü fark '+(best?best.ex.toFixed(0):0)+' dB). Mikrofon bu frekansı yakalamıyor olabilir.';return}
+  usel.value=best.f;uload();
+  out.textContent='Tanındı: Duyulamayan · '+(best.f/1000).toFixed(2)+' kHz (+'+best.ex.toFixed(0)+' dB)';
+  say('Duyulamayan. '+(unotes[best.f]||'Bu ses için kayıtlı not yok.'));
+}
+$('ulisten').onclick=urecognize;
+uload();
 $('play').onclick=()=>playing?stop():start(seedVal());
 $('rnd').onclick=()=>go(Math.floor(Math.random()*4294967296));
 $('prev').onclick=()=>go(seedVal()-1);
