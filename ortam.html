@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ses Ortamı Üretici</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--card:#f1f1f4;--acc:#3b6df0;--mut:#666;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16161a;--fg:#eee;--card:#25252b;--acc:#7b9cff;--mut:#aaa}}
+:root[data-theme="dark"]{--bg:#16161a;--fg:#eee;--card:#25252b;--acc:#7b9cff;--mut:#aaa}
+body{margin:0 auto;padding:16px;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;max-width:640px}
+h1{font-size:1.3rem;margin:.2em 0}p,label,small{font-size:.88rem;color:var(--mut)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+input,button{font:inherit;padding:10px 14px;border-radius:10px;border:0;background:var(--card);color:var(--fg)}
+input[type=number]{flex:1;min-width:140px}input[type=range]{flex:1;padding:0}
+button.main{background:var(--acc);color:#fff}
+#name{font-size:1.5rem;font-weight:700;margin:12px 0 2px}
+canvas{width:100%;height:90px;background:var(--card);border-radius:10px;display:block}
+.layer{background:var(--card);border-radius:10px;padding:8px 12px;margin:6px 0;font-size:.85rem;display:flex;justify-content:space-between;gap:8px}
+.layer b{color:var(--acc)}
+textarea{width:100%;box-sizing:border-box;min-height:80px;font:inherit;padding:10px;border-radius:10px;border:0;background:var(--card);color:var(--fg);resize:vertical}
+h2{font-size:1rem;margin:18px 0 6px}
+.nitem{background:var(--card);border-radius:10px;padding:8px 12px;margin:6px 0;font-size:.85rem;cursor:pointer}
+.nitem b{color:var(--acc)}
+</style>
+</head>
+<body>
+<h1>Ses Ortamı Üretici</h1>
+<p>Her tohum (seed) numarası tek bir ortam üretir. Ortam; 3-6 katmandan oluşur ve her katman, beynin ayırt edebileceği ~1.400 frekans adımından, ~250 şiddet adımından, tını, konum ve dalgalanma seçeneklerinden seçilir. <b>4.294.967.296</b> farklı ortam mümkündür. Aynı numara her zaman aynı ortamı verir.</p>
+
+<div class="row">
+<input id="seed" type="number" min="0" max="4294967295" value="1">
+<button id="rnd">🎲 Rastgele</button>
+</div>
+<div class="row">
+<button id="prev">◀</button>
+<button class="main" id="play" style="flex:1">▶ Çal</button>
+<button id="next">▶|</button>
+</div>
+<div class="row"><label>Ses:</label><input id="vol" type="range" min="0" max="100" value="20"></div>
+<div class="row"><label><input type="checkbox" id="bgmode" style="padding:0"> Arka planda çal (deneysel, kesilme yapabilir)</label></div>
+
+<div class="row"><button class="main" id="listen" style="flex:1">🎧 Dinle ve tanı</button></div>
+<small id="rec">Başka bir cihazda çalan ortamı dinletin. Notlu ortamlar arasından tanır ve notunu sesli okur.</small>
+<div id="name"></div>
+<small id="meta"></small>
+<canvas id="cv" width="600" height="90"></canvas>
+<audio id="bg" playsinline style="display:none"></audio>
+<div id="layers"></div>
+
+<h2>📝 Bu ortamın notu</h2>
+<textarea id="note" placeholder="Bu ortam hakkında not yazın..."></textarea>
+<div class="row"><button class="main" id="nsave">Kaydet</button><button id="ndel">Sil</button><small id="nstate"></small></div>
+<h2>Kayıtlı notlar</h2>
+<div id="nlist"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const A=['Sakin','Derin','Parlak','Puslu','Gizemli','Yumuşak','Uzak','Sıcak','Soğuk','Rüya gibi','Titrek','Geniş','Yoğun','Sessiz','Büyülü','Gece','Loş','Berrak'];
+const N=['Orman','Okyanus','Uzay','Mağara','Çöl','Sis','Kıyı','Vadi','Gökyüzü','Tünel','Bahçe','Kutup','Şehir','Tapınak','Ada','Fırtına','Göl','Dağ'];
+function rng(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function aw(f){const f2=f*f;const r=148693636*f2*f2/((f2+424.36)*Math.sqrt((f2+11599.29)*(f2+544496.41))*(f2+148693636));return 20*Math.log10(r)+2}
+function fmt(f){return f>=1000?(f/1000).toFixed(2)+' kHz':f.toFixed(1)+' Hz'}
+const TYPES=['Saf (sinüs)','Yumuşak (2 harmonik)','Zengin (3 harmonik)','Parlak (4 harmonik)'];
+
+function make(seed){
+  const r=rng(seed),n=3+Math.floor(r()*4),L=[];
+  for(let i=0;i<n;i++){
+    const fi=Math.floor(r()*1400),lv=Math.floor(r()*250);
+    L.push({f:20*Math.pow(1000,fi/1399),fi,lv,db:-50+lv/249*30,
+      h:1+Math.floor(r()*4),pan:(Math.floor(r()*11)-5)/5,
+      rate:0.05+r()*5.95,depth:r()*0.8});
+  }
+  return {L,name:A[Math.floor(r()*A.length)]+' '+N[Math.floor(r()*N.length)]};
+}
+
+let ctx,master,comp,an,sd,nodes=[],playing=false;
+function show(seed){
+  const e=make(seed);
+  $('name').textContent=e.name;
+  $('meta').textContent='Tohum #'+seed+' · '+e.L.length+' katman';
+  $('layers').innerHTML=e.L.map((l,i)=>`<div class="layer"><span><b>${i+1}.</b> ${fmt(l.f)} · ${TYPES[l.h-1]}</span><span>${l.db.toFixed(0)} dB · ${l.pan<0?'sol':l.pan>0?'sağ':'orta'} · ${l.rate.toFixed(2)} Hz</span></div>`).join('');
+  loadNote(seed);
+  return e;
+}
+function stopNodes(){
+  const t=ctx.currentTime;
+  const old=nodes;nodes=[];
+  old.forEach(o=>{o.g.gain.cancelScheduledValues(t);o.g.gain.setTargetAtTime(0,t,0.3);setTimeout(()=>{o.oscs.forEach(x=>{try{x.stop()}catch(e){}})},1800)});
+}
+function start(seed){
+  if(!ctx){
+    ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'playback'});
+    master=ctx.createGain();comp=ctx.createDynamicsCompressor();an=ctx.createAnalyser();an.fftSize=256;
+    comp.threshold.value=-14;comp.knee.value=20;comp.ratio.value=4;comp.attack.value=0.05;comp.release.value=0.5;
+    master.connect(comp);comp.connect(an);setVol();draw();
+    try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch(e){}
+    sd=ctx.createMediaStreamDestination();
+    applyBg();
+  }
+  if(ctx.state==='suspended')ctx.resume();
+  stopNodes();
+  const e=show(seed),t=ctx.currentTime;
+  e.L.forEach(l=>{
+    const osc=ctx.createOscillator(),g=ctx.createGain(),p=ctx.createStereoPanner(),lfo=ctx.createOscillator(),lg=ctx.createGain();
+    const re=new Float32Array(l.h+1),im=new Float32Array(l.h+1);
+    for(let k=1;k<=l.h;k++)im[k]=1/k;
+    osc.setPeriodicWave(ctx.createPeriodicWave(re,im));osc.frequency.value=l.f;
+    const comp_db=Math.min(-aw(l.f),24);
+    const amp=Math.pow(10,(l.db+comp_db)/20)/Math.sqrt(e.L.length);
+    g.gain.value=0;
+    g.gain.setTargetAtTime(amp*(1-l.depth/2),t,0.8);
+    lfo.frequency.value=l.rate;lg.gain.value=amp*l.depth/2;
+    lfo.connect(lg).connect(g.gain);
+    p.pan.value=l.pan;
+    osc.connect(g).connect(p).connect(master);
+    osc.start();lfo.start();
+    nodes.push({g,oscs:[osc,lfo]});
+  });
+  playing=true;$('play').textContent='■ Durdur';updateMedia(e.name,seed);
+}
+function stop(){if(ctx)stopNodes();playing=false;$('play').textContent='▶ Çal';try{navigator.mediaSession.playbackState='paused'}catch(e){}}
+function applyBg(){
+  if(!ctx)return;const au=$('bg'),on=$('bgmode').checked;
+  try{an.disconnect(ctx.destination)}catch(e){}
+  try{an.disconnect(sd)}catch(e){}
+  if(on){an.connect(sd);au.srcObject=sd.stream;au.play().catch(()=>{an.connect(ctx.destination);$('bgmode').checked=false})}
+  else{au.pause();au.srcObject=null;an.connect(ctx.destination)}
+}
+function setVol(){if(master)master.gain.value=Math.pow($('vol').value/100,2)*0.6}
+function seedVal(){let v=Math.floor(+$('seed').value)||0;return Math.min(4294967295,Math.max(0,v))}
+function go(s){s=Math.min(4294967295,Math.max(0,s));$('seed').value=s;playing?start(s):show(s)}
+let last=0;
+function draw(t){
+  requestAnimationFrame(draw);
+  if(document.hidden||t-last<50)return;last=t;
+  const c=$('cv'),x=c.getContext('2d'),d=new Uint8Array(an.frequencyBinCount);
+  an.getByteFrequencyData(d);x.clearRect(0,0,c.width,c.height);
+  x.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--acc')||'#3b6df0';
+  const w=c.width/d.length;
+  for(let i=0;i<d.length;i++){const h=d[i]/255*c.height;x.fillRect(i*w,c.height-h,w-1,h)}
+}
+$('bgmode').onchange=applyBg;
+let listening=false;
+function say(t){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='tr-TR';const v=speechSynthesis.getVoices().find(v=>v.lang&&v.lang.toLowerCase().startsWith('tr'));if(v)u.voice=v;speechSynthesis.speak(u)}catch(e){}}
+async function recognize(){
+  if(listening)return;
+  const out=$('rec'),seeds=Object.keys(notes).map(Number);
+  if(!seeds.length){out.textContent='Önce en az bir ortama not kaydedin; tanıma notlu ortamlar arasında yapılır.';return}
+  try{speechSynthesis.speak(new SpeechSynthesisUtterance(''))}catch(e){}
+  let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}})}
+  catch(e){out.textContent='Mikrofona erişilemedi. Tarayıcı izni gerekli; sayfa gömülü açıldıysa doğrudan tarayıcıda açın.';return}
+  listening=true;$('listen').disabled=true;
+  const rc=new (window.AudioContext||window.webkitAudioContext)();
+  const src=rc.createMediaStreamSource(stream),a=rc.createAnalyser();
+  a.fftSize=32768;a.smoothingTimeConstant=0;src.connect(a);
+  const n=a.frequencyBinCount,bin=rc.sampleRate/a.fftSize,buf=new Float32Array(n),sum=new Float32Array(n);
+  let frames=0;const T=5000,t0=performance.now();
+  await new Promise(res=>{
+    const iv=setInterval(()=>{
+      a.getFloatFrequencyData(buf);
+      for(let i=0;i<n;i++)sum[i]+=isFinite(buf[i])?buf[i]:-140;
+      frames++;
+      out.textContent='Dinleniyor… %'+Math.min(100,Math.round((performance.now()-t0)/T*100));
+      if(performance.now()-t0>=T){clearInterval(iv);res()}
+    },250);
+  });
+  stream.getTracks().forEach(t=>t.stop());rc.close();
+  listening=false;$('listen').disabled=false;
+  const sp=sum.map(v=>v/frames);
+  const lo=Math.ceil(20/bin),hi=Math.min(n-4,Math.floor(20000/bin));
+  const sorted=Array.from(sp.slice(lo,hi)).sort((x,y)=>x-y),floor=sorted[sorted.length>>1];
+  const peaks=[];
+  for(let i=lo+3;i<hi-3;i++){
+    let ok=sp[i]>floor+12;
+    for(let k=1;k<=3&&ok;k++)if(sp[i]<sp[i-k]||sp[i]<sp[i+k])ok=false;
+    if(ok)peaks.push({f:i*bin,db:sp[i]});
+  }
+  peaks.sort((x,y)=>y.db-x.db);
+  const P=peaks.slice(0,10);
+  if(!P.length){out.textContent='Belirgin bir ses algılanmadı. Sesi yükseltip mikrofona yaklaştırın.';return}
+  const res=seeds.map(s=>{
+    const L=make(s).L;let wm=0,wt=0;const used=new Set();
+    L.forEach(l=>{
+      const w=(l.f<80||l.f>12000)?0.3:1;wt+=w;
+      const tol=Math.max(0.02,3*bin/l.f);
+      let best=-1;
+      P.forEach((p,j)=>{if(Math.abs(Math.log(p.f/l.f))<tol&&(best<0||p.db>P[best].db))best=j});
+      if(best>=0){wm+=w;used.add(best)}
+    });
+    return {s,score:Math.sqrt((wm/wt)*(used.size/P.length))};
+  }).sort((x,y)=>y.score-x.score);
+  const b=res[0],sec=res[1];
+  const list=res.slice(0,3).map(r=>'#'+r.s+' '+make(r.s).name+' %'+Math.round(r.score*100)).join(' · ');
+  const pk='Algılanan tepeler: '+P.slice(0,6).map(p=>fmt(p.f)).join(', ');
+  if(b.score<0.5||(sec&&b.score-sec.score<0.1&&b.score<0.8)){
+    out.textContent='Emin olamadım. Olası: '+list+'. '+pk;
+    say('Emin olamadım.');return;
+  }
+  $('seed').value=b.s;show(b.s);
+  out.textContent='Tanındı: '+list+'. '+pk;
+  say(make(b.s).name+'. '+notes[b.s]);
+}
+$('listen').onclick=recognize;
+$('play').onclick=()=>playing?stop():start(seedVal());
+$('rnd').onclick=()=>go(Math.floor(Math.random()*4294967296));
+$('prev').onclick=()=>go(seedVal()-1);
+$('next').onclick=()=>go(seedVal()+1);
+$('seed').onchange=()=>go(seedVal());
+$('vol').oninput=setVol;
+const KEY='ortam-notlar';
+let notes={},cur=1;
+try{notes=JSON.parse(localStorage.getItem(KEY)||'{}')||{}}catch(e){notes={}}
+function persist(){try{localStorage.setItem(KEY,JSON.stringify(notes));return true}catch(e){return false}}
+function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function loadNote(seed){cur=seed;$('note').value=notes[seed]||'';$('nstate').textContent=notes[seed]?'Bu ortam için kayıtlı not var.':'Bu ortam için not yok.'}
+function renderNotes(){
+  const ks=Object.keys(notes).map(Number).sort((a,b)=>a-b);
+  $('nlist').innerHTML=ks.length?ks.map(k=>`<div class="nitem" data-s="${k}"><b>#${k} · ${make(k).name}</b><br>${esc(notes[k].length>90?notes[k].slice(0,90)+'…':notes[k])}</div>`).join(''):'<small>Henüz not yok.</small>';
+  [...$('nlist').querySelectorAll('.nitem')].forEach(el=>el.onclick=()=>{go(+el.dataset.s);window.scrollTo({top:0,behavior:'smooth'})});
+}
+$('nsave').onclick=()=>{
+  const t=$('note').value.trim();
+  if(t)notes[cur]=t;else delete notes[cur];
+  const ok=persist();
+  $('nstate').textContent=ok?(t?'Kaydedildi ✓':'Not silindi'):'Kaydedilemedi (tarayıcı depolaması kapalı olabilir).';
+  renderNotes();
+};
+$('ndel').onclick=()=>{$('note').value='';$('nsave').onclick()};
+function updateMedia(name,seed){
+  if(!('mediaSession' in navigator))return;
+  try{navigator.mediaSession.metadata=new MediaMetadata({title:name,artist:'Ses Ortamı #'+seed,album:'Ses Ortamı Üretici'});navigator.mediaSession.playbackState='playing'}catch(e){}
+}
+if('mediaSession' in navigator){
+  const ms=navigator.mediaSession,set=(a,f)=>{try{ms.setActionHandler(a,f)}catch(e){}};
+  set('play',()=>start(seedVal()));set('pause',stop);set('stop',stop);
+  set('previoustrack',()=>go(seedVal()-1));set('nexttrack',()=>go(seedVal()+1));
+}
+document.addEventListener('visibilitychange',()=>{
+  if(playing&&ctx){if(ctx.state!=='running')ctx.resume();const au=$('bg');if($('bgmode').checked&&au.paused)au.play().catch(()=>{})}
+});
+show(1);
+renderNotes();
+</script>
+</body>
+</html>
