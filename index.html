@@ -20,6 +20,7 @@ canvas{width:100%;height:90px;background:var(--card);border-radius:10px;display:
 .layer b{color:var(--acc)}
 textarea{width:100%;box-sizing:border-box;min-height:80px;font:inherit;padding:10px;border-radius:10px;border:0;background:var(--card);color:var(--fg);resize:vertical}
 h2{font-size:1rem;margin:18px 0 6px}
+select{font:inherit;padding:10px;border-radius:10px;border:0;background:var(--card);color:var(--fg)}
 .nitem{background:var(--card);border-radius:10px;padding:8px 12px;margin:6px 0;font-size:.85rem;cursor:pointer}
 .nitem b{color:var(--acc)}
 </style>
@@ -60,6 +61,17 @@ h2{font-size:1rem;margin:18px 0 6px}
 <div class="row"><button class="main" id="uplay">▶ Yayınla</button><button id="ulisten">🎧 Dinle ve tanı</button></div>
 <textarea id="unote" placeholder="Bu duyulamayan ses için not..."></textarea>
 <div class="row"><button id="usave">Notu kaydet</button><button id="usay" style="display:none">🔊 Notu tekrar oku</button><small id="ustate"></small></div>
+
+<h2>✉️ Mesaj gönder / al</h2>
+<small>Her harf iki tonun birleşimiyle gönderilir (telefon tuş sesi gibi). Gönderen ve alan cihazda <b>aynı ayarlar</b> seçili olmalı. Önce duyulabilir modda deneyin. Desteklenen: Türkçe harfler, rakamlar, boşluk ve . , ? !</small>
+<div class="row">
+<select id="mband"><option value="a">Duyulabilir (1-3 kHz, test)</option><option value="u">Duyulamayan (19-21,5 kHz)</option></select>
+<select id="mspd"><option value="0">Hızlı</option><option value="1" selected>Normal</option><option value="2">Yavaş (gürültülü)</option></select>
+<select id="mrep"><option value="1">1 kez</option><option value="2" selected>2 kez</option><option value="3">3 kez</option></select>
+</div>
+<textarea id="mtext" placeholder="Göndermek istediğiniz kısa mesaj (en fazla 40 karakter)"></textarea>
+<div class="row"><button class="main" id="msend">📤 Gönder</button><button id="mrecv">📥 Al (dinle)</button></div>
+<div id="mout" style="margin:8px 0;font-size:.95rem">Hazır.</div>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -297,6 +309,129 @@ async function urecognize(){
 let lastSay='';
 $('usay').onclick=()=>say(lastSay);
 $('ulisten').onclick=urecognize;
+
+/* ---- Mesaj gönder / al (iki tonlu kodlama) ---- */
+const ALPH='ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ 0123456789.,?!';
+const SYM_START=44,SYM_END=45;
+const MBANDS={a:[1000,1200,1400,1600,1800,2000,2200,2400,2600,2800,3000],u:UF.slice()};
+const MSPD=[[150,110],[250,140],[400,180]];
+const PAIRS=[];for(let a=0;a<11;a++)for(let b=a+1;b<11;b++)PAIRS.push([a,b]);
+function mclean(t){
+  t=t.normalize('NFC').toLocaleUpperCase('tr-TR').replace(/W/g,'V').replace(/Q/g,'K').replace(/X/g,'KS');
+  return Array.from(t).filter(c=>ALPH.includes(c)).join('').slice(0,40);
+}
+function mcheck(idx){let s=0;idx.forEach((v,i)=>{s+=(i+1)*v});return s%44}
+function mframe(text){const idx=Array.from(text).map(c=>ALPH.indexOf(c));return [SYM_START,...idx,mcheck(idx),SYM_END]}
+function mcfg(){return {band:MBANDS[$('mband').value],spd:MSPD[+$('mspd').value],rep:+$('mrep').value}}
+
+let mnodes=[],mtimer=null;
+function mstop(){
+  mnodes.forEach(o=>{try{o.stop()}catch(e){}});mnodes=[];clearTimeout(mtimer);
+  $('msend').textContent='📤 Gönder';
+}
+function msend(){
+  if(mnodes.length){mstop();$('mout').textContent='Gönderim durduruldu.';return}
+  const text=mclean($('mtext').value);
+  if(!text){$('mout').textContent='Gönderilecek geçerli karakter yok.';return}
+  $('mtext').value=text;
+  const {band,spd,rep}=mcfg();
+  if(!uc){try{uc=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000})}catch(e){uc=new (window.AudioContext||window.webkitAudioContext)()}}
+  if(uc.sampleRate/2<band[10]+300){$('mout').textContent='Bu cihaz bu bandı çalamıyor, duyulabilir modu seçin.';return}
+  if(uc.state==='suspended')uc.resume();
+  ustop();
+  const frame=mframe(text),tone=spd[0]/1000,gap=spd[1]/1000,step=tone+gap;
+  const v=Math.pow($('vol').value/100,2)*0.25;
+  let t=uc.currentTime+0.3;
+  for(let r=0;r<rep;r++){
+    frame.forEach(sym=>{
+      PAIRS[sym].forEach(k=>{
+        const o=uc.createOscillator(),g=uc.createGain();
+        o.type='sine';o.frequency.value=band[k];
+        g.gain.setValueAtTime(0,t);
+        g.gain.linearRampToValueAtTime(v,t+0.01);
+        g.gain.setValueAtTime(v,t+tone-0.01);
+        g.gain.linearRampToValueAtTime(0,t+tone);
+        o.connect(g).connect(uc.destination);
+        o.start(t);o.stop(t+tone+0.02);
+        mnodes.push(o);
+      });
+      t+=step;
+    });
+    t+=0.5;
+  }
+  const total=t-uc.currentTime;
+  $('msend').textContent='■ Durdur';
+  $('mout').textContent='Gönderiliyor: «'+text+'» ('+frame.length+' sembol × '+rep+', yaklaşık '+total.toFixed(0)+' sn)';
+  mtimer=setTimeout(()=>{mnodes=[];$('msend').textContent='📤 Gönder';$('mout').textContent='Gönderildi: «'+text+'»'},total*1000);
+}
+
+let mrx=null;
+function mrstop(msg){
+  if(!mrx)return;
+  clearInterval(mrx.iv);
+  try{mrx.stream.getTracks().forEach(t=>t.stop());mrx.rc.close()}catch(e){}
+  mrx=null;$('mrecv').textContent='📥 Al (dinle)';
+  if(msg)$('mout').textContent=msg;
+}
+async function mrecv(){
+  if(mrx){mrstop('Dinleme durduruldu.');return}
+  const out=$('mout');
+  try{speechSynthesis.cancel();const z=new SpeechSynthesisUtterance(' ');z.volume=0;speechSynthesis.speak(z)}catch(e){}
+  let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}})}
+  catch(e){out.textContent='Mikrofona erişilemedi. Tarayıcı izni gerekli.';return}
+  const {band,spd}=mcfg();
+  const rc=new (window.AudioContext||window.webkitAudioContext)();
+  if(rc.sampleRate/2<band[10]+300){
+    stream.getTracks().forEach(t=>t.stop());rc.close();
+    out.textContent='Bu cihazın mikrofonu bu bandı yakalayamaz, duyulabilir modu seçin.';return;
+  }
+  const a=rc.createAnalyser();a.fftSize=2048;a.smoothingTimeConstant=0;
+  rc.createMediaStreamSource(stream).connect(a);
+  const n=a.frequencyBinCount,bin=rc.sampleRate/a.fftSize,buf=new Float32Array(n);
+  const cb=band.map(f=>Math.round(f/bin));
+  const flo=Math.max(1,Math.round((band[0]-600)/bin)),fhi=Math.min(n-2,Math.round((band[10]+600)/bin));
+  const minDur=spd[0]*0.5;
+  let cur=-1,start=0,lastOk=0,syms=[],active=false;
+  function deliver(text){
+    mrstop();
+    out.textContent='Alındı: «'+text+'»';
+    say(text.toLocaleLowerCase('tr-TR'));
+  }
+  function onSym(sym){
+    if(sym===SYM_START){syms=[SYM_START];active=true}
+    else if(active&&sym<44){syms.push(sym)}
+    else if(active&&sym===SYM_END){
+      const body=syms.slice(1),chk=body.pop();
+      if(body.length&&mcheck(body)===chk){deliver(body.map(i=>ALPH[i]).join(''));return}
+      out.textContent='Bozuk mesaj alındı, tekrar bekleniyor…';active=false;syms=[];return;
+    }
+    else return;
+    out.textContent='Alınıyor… ('+(syms.length-1)+' sembol)';
+  }
+  function endRun(){if(lastOk-start>=minDur)onSym(cur);cur=-1}
+  function frame(){
+    a.getFloatFrequencyData(buf);
+    const seg=Array.from(buf.slice(flo,fhi)).map(v=>isFinite(v)?v:-140).sort((x,y)=>x-y);
+    const floor=seg[seg.length>>1];
+    const ex=cb.map((c,k)=>({k,e:Math.max(buf[c-1],buf[c],buf[c+1])-floor})).sort((p,q)=>q.e-p.e);
+    let code=-1;
+    if(ex[0].e>=12&&ex[1].e>=12&&ex[2].e<ex[1].e-6){
+      const lo=Math.min(ex[0].k,ex[1].k),hi=Math.max(ex[0].k,ex[1].k);
+      code=PAIRS.findIndex(p=>p[0]===lo&&p[1]===hi);
+    }
+    const now=performance.now();
+    if(code>=0&&code===cur){lastOk=now;return}
+    if(cur>=0){if(now-lastOk<=55)return;endRun()}
+    if(code>=0){cur=code;start=now;lastOk=now}
+  }
+  mrx={iv:setInterval(frame,20),stream,rc};
+  $('mrecv').textContent='■ Dinlemeyi durdur';
+  out.textContent='Dinleniyor… mesaj bekleniyor';
+  setTimeout(()=>{if(mrx&&mrx.rc===rc)mrstop('Zaman aşımı: 2 dakika içinde mesaj gelmedi.')},120000);
+}
+$('msend').onclick=msend;
+$('mrecv').onclick=mrecv;
 uload();
 $('play').onclick=()=>playing?stop():start(seedVal());
 $('rnd').onclick=()=>go(Math.floor(Math.random()*4294967296));
