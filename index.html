@@ -188,13 +188,14 @@ async function recognize(){
       let best=-1;
       P.forEach((p,j)=>{if(Math.abs(Math.log(p.f/l.f))<tol&&(best<0||p.db>P[best].db))best=j});
       if(best>=0){wm+=w;used.add(best)}
+      for(let k=2;k<=l.h;k++)P.forEach((p,j)=>{if(Math.abs(Math.log(p.f/(l.f*k)))<Math.max(0.02,3*bin/(l.f*k)))used.add(j)});
     });
     return {s,score:Math.sqrt((wm/wt)*(used.size/P.length))};
   }).sort((x,y)=>y.score-x.score);
   const b=res[0],sec=res[1];
   const list=res.slice(0,3).map(r=>'#'+r.s+' '+make(r.s).name+' %'+Math.round(r.score*100)).join(' · ');
   const pk='Algılanan tepeler: '+P.slice(0,6).map(p=>fmt(p.f)).join(', ');
-  if(b.score<0.5||(sec&&b.score-sec.score<0.1&&b.score<0.8)){
+  if(b.score<0.3||(sec&&b.score-sec.score<0.08&&b.score<0.6)){
     out.textContent='Emin olamadım. Olası: '+list+'. '+pk;
     say('Emin olamadım.');return;
   }
