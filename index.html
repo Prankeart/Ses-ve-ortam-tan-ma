@@ -59,7 +59,7 @@ h2{font-size:1rem;margin:18px 0 6px}
 <div class="row"><select id="usel" style="flex:1;font:inherit;padding:10px;border-radius:10px;border:0;background:var(--card);color:var(--fg)"></select></div>
 <div class="row"><button class="main" id="uplay">▶ Yayınla</button><button id="ulisten">🎧 Dinle ve tanı</button></div>
 <textarea id="unote" placeholder="Bu duyulamayan ses için not..."></textarea>
-<div class="row"><button id="usave">Notu kaydet</button><small id="ustate"></small></div>
+<div class="row"><button id="usave">Notu kaydet</button><button id="usay" style="display:none">🔊 Notu tekrar oku</button><small id="ustate"></small></div>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -252,6 +252,7 @@ $('uplay').onclick=uplay;
 async function urecognize(){
   if(listening)return;
   const out=$('ustate');
+  try{speechSynthesis.cancel();const z=new SpeechSynthesisUtterance(' ');z.volume=0;speechSynthesis.speak(z)}catch(e){}
   let stream;
   try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}})}
   catch(e){out.textContent='Mikrofona erişilemedi. Tarayıcı izni gerekli.';return}
@@ -287,8 +288,14 @@ async function urecognize(){
   if(!best||best.ex<10){out.textContent='Duyulamayan bir ses algılanmadı (en güçlü fark '+(best?best.ex.toFixed(0):0)+' dB). Mikrofon bu frekansı yakalamıyor olabilir.';return}
   usel.value=best.f;uload();
   out.textContent='Tanındı: Duyulamayan · '+(best.f/1000).toFixed(2)+' kHz (+'+best.ex.toFixed(0)+' dB)';
-  say('Duyulamayan. '+(unotes[best.f]||'Bu ses için kayıtlı not yok.'));
+  const txt=unotes[best.f]||'Bu ses için kayıtlı not yok.';
+  lastSay='Duyulamayan. '+txt;
+  out.textContent+=' · Not: '+txt;
+  $('usay').style.display='';
+  say(lastSay);
 }
+let lastSay='';
+$('usay').onclick=()=>say(lastSay);
 $('ulisten').onclick=urecognize;
 uload();
 $('play').onclick=()=>playing?stop():start(seedVal());
