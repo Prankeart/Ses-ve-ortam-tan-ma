@@ -195,13 +195,15 @@ async function recognize(){
   const b=res[0],sec=res[1];
   const list=res.slice(0,3).map(r=>'#'+r.s+' '+make(r.s).name+' %'+Math.round(r.score*100)).join(' · ');
   const pk='Algılanan tepeler: '+P.slice(0,6).map(p=>fmt(p.f)).join(', ');
-  if(b.score<0.3||(sec&&b.score-sec.score<0.08&&b.score<0.6)){
+  if(b.score<0.15){
     out.textContent='Emin olamadım. Olası: '+list+'. '+pk;
     say('Emin olamadım.');return;
   }
   $('seed').value=b.s;show(b.s);
   out.textContent='Tanındı: '+list+'. '+pk;
-  say(make(b.s).name+'. '+notes[b.s]);
+  const unsure=sec&&b.score-sec.score<0.08;
+  if(unsure)out.textContent+=' (Yakın bir aday daha var, sonuç kesin değil.)';
+  say((unsure?'Büyük ihtimalle ':'')+make(b.s).name+'. '+notes[b.s]);
 }
 $('listen').onclick=recognize;
 $('play').onclick=()=>playing?stop():start(seedVal());
